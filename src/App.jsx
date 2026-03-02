@@ -1,5 +1,5 @@
-import { useMemo, useState } from 'react'
-import { MapContainer, Marker, Popup, TileLayer, useMap } from 'react-leaflet'
+import { useEffect, useMemo, useState } from 'react'
+import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -29,7 +29,7 @@ const defaultCenter = [20, 0]
 const toRadians = (deg) => (deg * Math.PI) / 180
 const toDegrees = (rad) => (rad * 180) / Math.PI
 
-function haversineMidpoint([lat1, lon1], [lat2, lon2]) {
+function biasedGreatCirclePoint([lat1, lon1], [lat2, lon2], bias = 0.5) {
   const phi1 = toRadians(lat1)
   const lambda1 = toRadians(lon1)
   const phi2 = toRadians(lat2)
@@ -43,12 +43,19 @@ function haversineMidpoint([lat1, lon1], [lat2, lon2]) {
   const y2 = Math.cos(phi2) * Math.sin(lambda2)
   const z2 = Math.sin(phi2)
 
-  const x = x1 + x2
-  const y = y1 + y2
-  const z = z1 + z2
+  const x = (1 - bias) * x1 + bias * x2
+  const y = (1 - bias) * y1 + bias * y2
+  const z = (1 - bias) * z1 + bias * z2
 
-  const hyp = Math.sqrt(x * x + y * y)
-  return [toDegrees(Math.atan2(z, hyp)), toDegrees(Math.atan2(y, x))]
+  const norm = Math.sqrt(x * x + y * y + z * z)
+  const nx = x / norm
+  const ny = y / norm
+  const nz = z / norm
+
+  const latitude = toDegrees(Math.atan2(nz, Math.sqrt(nx * nx + ny * ny)))
+  const longitude = toDegrees(Math.atan2(ny, nx))
+
+  return [latitude, longitude]
 }
 
 async function geocodeAddress(query) {
@@ -78,12 +85,14 @@ async function geocodeAddress(query) {
 function FitMapToPoints({ points }) {
   const map = useMap()
 
-  if (!points.length) {
-    return null
-  }
+  useEffect(() => {
+    if (!points.length) {
+      return
+    }
 
-  const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lon]))
-  map.fitBounds(bounds, { padding: [50, 50] })
+    const bounds = L.latLngBounds(points.map((point) => [point.lat, point.lon]))
+    map.fitBounds(bounds, { padding: [50, 50] })
+  }, [map, points])
 
   return null
 }
@@ -93,9 +102,22 @@ export default function App() {
   const [addressB, setAddressB] = useState('Los Angeles, CA')
   const [pointA, setPointA] = useState(null)
   const [pointB, setPointB] = useState(null)
-  const [midpoint, setMidpoint] = useState(null)
+  const [bias, setBias] = useState(0.5)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+
+  const midpoint = useMemo(() => {
+    if (!pointA || !pointB) {
+      return null
+    }
+
+    const [lat, lon] = biasedGreatCirclePoint([pointA.lat, pointA.lon], [pointB.lat, pointB.lon], bias)
+    return {
+      lat,
+      lon,
+      displayName: `Bias-adjusted midpoint (${bias.toFixed(2)})`,
+    }
+  }, [bias, pointA, pointB])
 
   const mapPoints = useMemo(() => [pointA, pointB, midpoint].filter(Boolean), [pointA, pointB, midpoint])
 
@@ -110,23 +132,12 @@ export default function App() {
         geocodeAddress(addressB.trim()),
       ])
 
-      const [midLat, midLon] = haversineMidpoint(
-        [resultA.lat, resultA.lon],
-        [resultB.lat, resultB.lon],
-      )
-
       setPointA(resultA)
       setPointB(resultB)
-      setMidpoint({
-        lat: midLat,
-        lon: midLon,
-        displayName: 'Calculated geographic midpoint',
-      })
     } catch (err) {
       setError(err.message || 'Unable to calculate midpoint.')
       setPointA(null)
       setPointB(null)
-      setMidpoint(null)
     } finally {
       setLoading(false)
     }
@@ -139,7 +150,7 @@ export default function App() {
           <div className="mx-auto flex h-full w-full max-w-xl flex-col">
             <h1 className="text-3xl font-bold tracking-tight text-emerald-100">Geographical Midpoint Finder</h1>
             <p className="mt-3 text-sm text-emerald-200/90">
-              Enter two addresses to geocode with Nominatim and calculate the midpoint using the Haversine formula.
+              Enter two addresses to geocode with Nominatim and place an adjustable midpoint along the route.
             </p>
 
             <form onSubmit={handleFindMidpoint} className="mt-8 space-y-5">
@@ -165,6 +176,32 @@ export default function App() {
                 />
               </label>
 
+              <label className="block">
+                <div className="mb-2 flex items-center justify-between">
+                  <span className="text-sm font-semibold text-emerald-100">Bias slider</span>
+                  <span className="rounded bg-emerald-800/80 px-2 py-1 text-xs font-semibold text-lime-200">
+                    {bias.toFixed(2)}
+                  </span>
+                </div>
+                <input
+                  type="range"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  value={bias}
+                  onChange={(event) => setBias(Number(event.target.value))}
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-lime-400"
+                />
+                <p className="mt-2 text-xs text-emerald-300/90">
+                  0.00 = at Address A, 0.50 = true midpoint, 1.00 = at Address B.
+                </p>
+                <div className="mt-2 flex justify-between text-[11px] font-semibold uppercase tracking-wide text-emerald-300/80">
+                  <span>Closer to A</span>
+                  <span>Even (0.50)</span>
+                  <span>Closer to B</span>
+                </div>
+              </label>
+
               <button
                 type="submit"
                 disabled={loading}
@@ -186,7 +223,10 @@ export default function App() {
                     <strong>Address B:</strong> {pointB?.displayName}
                   </li>
                   <li>
-                    <strong>Midpoint:</strong> {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
+                    <strong>Bias:</strong> {bias.toFixed(2)}
+                  </li>
+                  <li>
+                    <strong>Adjusted midpoint:</strong> {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
                   </li>
                 </ul>
               ) : (
@@ -205,6 +245,16 @@ export default function App() {
 
             {mapPoints.length > 0 && <FitMapToPoints points={mapPoints} />}
 
+            {pointA && pointB && (
+              <Polyline
+                positions={[
+                  [pointA.lat, pointA.lon],
+                  [pointB.lat, pointB.lon],
+                ]}
+                pathOptions={{ color: '#1f2937', weight: 8, dashArray: '16 12', lineCap: 'butt' }}
+              />
+            )}
+
             {pointA && (
               <Marker position={[pointA.lat, pointA.lon]} icon={markerAIcon}>
                 <Popup>Address A: {pointA.displayName}</Popup>
@@ -220,7 +270,7 @@ export default function App() {
             {midpoint && (
               <Marker position={[midpoint.lat, midpoint.lon]} icon={midpointIcon}>
                 <Popup>
-                  Midpoint: {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
+                  Adjusted midpoint ({bias.toFixed(2)}): {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
                 </Popup>
               </Marker>
             )}
