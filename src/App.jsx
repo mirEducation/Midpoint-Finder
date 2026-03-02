@@ -94,9 +94,6 @@ const preferenceOptions = [
     filters: [
       { key: 'amenity', value: 'theatre' },
       { key: 'building', value: 'theatre' },
-      { key: 'amenity', value: 'arts_centre' },
-      { key: 'amenity', value: 'concert_hall' },
-      { key: 'tourism', value: 'theatre' },
     ],
   },
 ]
@@ -472,7 +469,7 @@ export default function App() {
                             step="0.1"
                             value={radiusKm}
                             onChange={(event) => setRadiusKm(Number(event.target.value) || 0)}
-                            className="no-spinner w-14 bg-transparent text-right focus:outline-none"
+                            className="w-14 bg-transparent text-right focus:outline-none"
                             aria-label="Radius in kilometers"
                           />
                           <span>km</span>
