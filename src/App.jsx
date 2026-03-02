@@ -83,6 +83,19 @@ const preferenceOptions = [
       { key: 'landuse', value: 'recreation_ground' },
     ],
   },
+  {
+    key: 'hotels',
+    label: 'Hotels',
+    filters: [{ key: 'tourism', value: 'hotel' }],
+  },
+  {
+    key: 'theatres',
+    label: 'Theatres',
+    filters: [
+      { key: 'amenity', value: 'theatre' },
+      { key: 'building', value: 'theatre' },
+    ],
+  },
 ]
 
 const toRadians = (deg) => (deg * Math.PI) / 180
@@ -273,7 +286,7 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
       }
 
       const data = await response.json()
-      return parseOverpassElements(data.elements ?? []).slice(0, 50)
+      return parseOverpassElements(data.elements ?? []).slice(0, 120)
     } catch {
       // try next endpoint
     }
@@ -449,15 +462,18 @@ export default function App() {
                     <label className="block col-span-2">
                       <div className="mb-1 flex items-center justify-between">
                         <span className="text-xs font-semibold text-emerald-100">Circle radius</span>
-                        <input
-                          type="number"
-                          min="0"
-                          step="0.1"
-                          value={radiusKm}
-                          onChange={(event) => setRadiusKm(Number(event.target.value) || 0)}
-                          className="w-24 rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-400"
-                          aria-label="Radius in kilometers"
-                        />
+                        <div className="flex items-center gap-1 rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-sky-100">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.1"
+                            value={radiusKm}
+                            onChange={(event) => setRadiusKm(Number(event.target.value) || 0)}
+                            className="w-14 bg-transparent text-right focus:outline-none"
+                            aria-label="Radius in kilometers"
+                          />
+                          <span>km</span>
+                        </div>
                       </div>
                       <input
                         type="range"
@@ -473,7 +489,7 @@ export default function App() {
 
                   <div>
                     <p className="mb-1 text-xs font-semibold text-emerald-100">Preferences</p>
-                    <div className="grid grid-cols-2 gap-1.5">
+                    <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3">
                       {preferenceOptions.map((option) => (
                         <label
                           key={option.key}
