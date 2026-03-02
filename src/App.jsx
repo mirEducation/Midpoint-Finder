@@ -94,6 +94,8 @@ const preferenceOptions = [
     filters: [
       { key: 'amenity', value: 'theatre' },
       { key: 'building', value: 'theatre' },
+      { key: 'amenity', value: 'arts_centre' },
+      { key: 'theatre:type' },
     ],
   },
 ]
@@ -200,10 +202,14 @@ async function geocodeAddress(query) {
 function buildOverpassQuery(latitude, longitude, radiusMeters, filters) {
   const lines = filters
     .map(
-      ({ key, value }) => `
-  node["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});
-  way["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});
-  relation["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});`,
+      ({ key, value }) => {
+        const tagFilter = value ? `["${key}"="${value}"]` : `["${key}"]`
+
+        return `
+  node${tagFilter}(around:${radiusMeters},${latitude},${longitude});
+  way${tagFilter}(around:${radiusMeters},${latitude},${longitude});
+  relation${tagFilter}(around:${radiusMeters},${latitude},${longitude});`
+      },
     )
     .join('')
 
@@ -222,7 +228,8 @@ function parseOverpassElements(elements) {
 
       const tags = element.tags ?? {}
       const name = tags.name || tags.brand || 'Unnamed spot'
-      const typeTag = tags.amenity || tags.leisure || tags.boundary || 'place'
+      const typeTag =
+        tags.amenity || tags.leisure || tags.boundary || tags.tourism || tags.building || tags['theatre:type'] || 'place'
       const address = [
         tags['addr:housenumber'],
         tags['addr:street'],
@@ -469,7 +476,7 @@ export default function App() {
                             step="0.1"
                             value={radiusKm}
                             onChange={(event) => setRadiusKm(Number(event.target.value) || 0)}
-                            className="w-14 bg-transparent text-right focus:outline-none"
+                            className="no-spinner w-14 bg-transparent text-right focus:outline-none"
                             aria-label="Radius in kilometers"
                           />
                           <span>km</span>
