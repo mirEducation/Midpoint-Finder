@@ -40,7 +40,7 @@ const spotIcon = L.divIcon({
 })
 
 const defaultCenter = [20, 0]
-const defaultRadiusKm = 8
+const defaultRadiusKm = 1.5
 
 const preferenceOptions = [
   {
@@ -80,6 +80,7 @@ const preferenceOptions = [
     filters: [
       { key: 'leisure', value: 'park' },
       { key: 'boundary', value: 'national_park' },
+      { key: 'landuse', value: 'recreation_ground' },
     ],
   },
 ]
@@ -116,6 +117,48 @@ function biasedGreatCirclePoint([lat1, lon1], [lat2, lon2], bias = 0.5) {
   return [latitude, longitude]
 }
 
+function normalizeLongitude(longitude) {
+  return ((((longitude + 180) % 360) + 360) % 360) - 180
+}
+
+function buildGreatCirclePath(pointA, pointB, segments = 96) {
+  if (!pointA || !pointB) {
+    return []
+  }
+
+  const path = []
+  for (let step = 0; step <= segments; step += 1) {
+    const t = step / segments
+    const [lat, lon] = biasedGreatCirclePoint([pointA.lat, pointA.lon], [pointB.lat, pointB.lon], t)
+    path.push([lat, lon])
+  }
+
+  for (let index = 1; index < path.length; index += 1) {
+    const previousLon = path[index - 1][1]
+    let currentLon = normalizeLongitude(path[index][1])
+
+    while (currentLon - previousLon > 180) {
+      currentLon -= 360
+    }
+    while (currentLon - previousLon < -180) {
+      currentLon += 360
+    }
+
+    path[index] = [path[index][0], currentLon]
+  }
+
+  return path
+}
+
+function shortenAddress(address = '') {
+  return address
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .join(', ')
+}
+
 async function geocodeAddress(query) {
   const url = `https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(query)}&limit=1`
   const response = await fetch(url, {
@@ -137,6 +180,7 @@ async function geocodeAddress(query) {
     lat: Number.parseFloat(data[0].lat),
     lon: Number.parseFloat(data[0].lon),
     displayName: data[0].display_name,
+    shortName: shortenAddress(data[0].display_name),
   }
 }
 
@@ -150,13 +194,7 @@ function buildOverpassQuery(latitude, longitude, radiusMeters, filters) {
     )
     .join('')
 
-  return `
-[out:json][timeout:30];
-(
-${lines}
-);
-out center;
-`
+  return `[out:json][timeout:30];(${lines});out center;`
 }
 
 function parseOverpassElements(elements) {
@@ -212,22 +250,36 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
   })
 
   const query = buildOverpassQuery(midpoint.lat, midpoint.lon, Math.round(radiusKm * 1000), filters)
+  const body = new URLSearchParams({ data: query }).toString()
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'text/plain',
-      Accept: 'application/json',
-    },
-    body: query,
-  })
+  const endpoints = [
+    'https://overpass-api.de/api/interpreter',
+    'https://overpass.kumi.systems/api/interpreter',
+  ]
 
-  if (!response.ok) {
-    throw new Error('Area search failed. Please try again.')
+  for (const endpoint of endpoints) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=UTF-8',
+          Accept: 'application/json',
+        },
+        body,
+      })
+
+      if (!response.ok) {
+        continue
+      }
+
+      const data = await response.json()
+      return parseOverpassElements(data.elements ?? []).slice(0, 50)
+    } catch {
+      // try next endpoint
+    }
   }
 
-  const data = await response.json()
-  return parseOverpassElements(data.elements ?? []).slice(0, 50)
+  throw new Error('Area search failed. Please try again.')
 }
 
 function FitMapToPoints({ points }) {
@@ -268,6 +320,7 @@ export default function App() {
       lat,
       lon,
       displayName: `Bias-adjusted midpoint (${bias.toFixed(2)})`,
+      googleMapsUrl: `https://www.google.com/maps?q=${lat},${lon}`,
     }
   }, [bias, pointA, pointB])
 
@@ -275,6 +328,8 @@ export default function App() {
     () => [pointA, pointB, midpoint, ...searchResults].filter(Boolean),
     [pointA, pointB, midpoint, searchResults],
   )
+
+  const routePath = useMemo(() => buildGreatCirclePath(pointA, pointB), [pointA, pointB])
 
   const handlePreferenceToggle = (key) => {
     setSelectedPreferences((current) =>
@@ -390,23 +445,31 @@ export default function App() {
 
               {enableAreaSearch && (
                 <div className="space-y-2 rounded-lg border border-emerald-700/80 bg-emerald-950/50 p-3 md:col-span-2">
-                  <label className="block">
-                    <div className="mb-1 flex items-center justify-between">
-                      <span className="text-xs font-semibold text-emerald-100">Circle radius</span>
-                      <span className="rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-sky-200">
-                        {radiusKm.toFixed(0)} km
-                      </span>
-                    </div>
-                    <input
-                      type="range"
-                      min="1"
-                      max="50"
-                      step="1"
-                      value={radiusKm}
-                      onChange={(event) => setRadiusKm(Number(event.target.value))}
-                      className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-sky-400"
-                    />
-                  </label>
+                  <div className="grid grid-cols-2 items-end gap-2">
+                    <label className="block col-span-2">
+                      <div className="mb-1 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-emerald-100">Circle radius</span>
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.1"
+                          value={radiusKm}
+                          onChange={(event) => setRadiusKm(Number(event.target.value) || 0)}
+                          className="w-24 rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-sky-100 focus:outline-none focus:ring-2 focus:ring-sky-400"
+                          aria-label="Radius in kilometers"
+                        />
+                      </div>
+                      <input
+                        type="range"
+                        min="0.3"
+                        max="10"
+                        step="0.1"
+                        value={Math.min(10, Math.max(0.3, radiusKm))}
+                        onChange={(event) => setRadiusKm(Number(event.target.value))}
+                        className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-sky-400"
+                      />
+                    </label>
+                  </div>
 
                   <div>
                     <p className="mb-1 text-xs font-semibold text-emerald-100">Preferences</p>
@@ -442,13 +505,13 @@ export default function App() {
             <div className="mt-3 rounded-xl border border-emerald-700/80 bg-emerald-950/50 p-3 text-xs">
               {error ? (
                 <p className="font-medium text-rose-300">{error}</p>
-              ) : midpoint ? (
+              ) : pointA && pointB ? (
                 <ul className="space-y-1 text-emerald-100">
                   <li>
-                    <strong>Bias:</strong> {bias.toFixed(2)}
+                    <strong>Address 1:</strong> {pointA.shortName}
                   </li>
                   <li>
-                    <strong>Midpoint:</strong> {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
+                    <strong>Address 2:</strong> {pointB.shortName}
                   </li>
                   {enableAreaSearch && (
                     <li>
@@ -472,12 +535,9 @@ export default function App() {
 
             {mapPoints.length > 0 && <FitMapToPoints points={mapPoints} />}
 
-            {pointA && pointB && (
+            {routePath.length > 1 && (
               <Polyline
-                positions={[
-                  [pointA.lat, pointA.lon],
-                  [pointB.lat, pointB.lon],
-                ]}
+                positions={routePath}
                 pathOptions={{ color: '#1f2937', weight: 8, dashArray: '16 12', lineCap: 'butt' }}
               />
             )}
@@ -485,7 +545,7 @@ export default function App() {
             {enableAreaSearch && midpoint && (
               <Circle
                 center={[midpoint.lat, midpoint.lon]}
-                radius={radiusKm * 1000}
+                radius={Math.max(0, radiusKm) * 1000}
                 pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#93c5fd', fillOpacity: 0.28 }}
               />
             )}
@@ -505,7 +565,20 @@ export default function App() {
             {midpoint && (
               <Marker position={[midpoint.lat, midpoint.lon]} icon={midpointIcon}>
                 <Popup>
-                  Adjusted midpoint ({bias.toFixed(2)}): {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
+                  <div className="space-y-1">
+                    <p className="font-semibold">Adjusted midpoint ({bias.toFixed(2)})</p>
+                    <p className="text-xs">
+                      {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
+                    </p>
+                    <a
+                      href={midpoint.googleMapsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-semibold text-blue-700 underline"
+                    >
+                      Open midpoint in Google Maps
+                    </a>
+                  </div>
                 </Popup>
               </Marker>
             )}
