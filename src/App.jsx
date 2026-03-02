@@ -1,5 +1,13 @@
 import { useEffect, useMemo, useState } from 'react'
-import { MapContainer, Marker, Polyline, Popup, TileLayer, useMap } from 'react-leaflet'
+import {
+  Circle,
+  MapContainer,
+  Marker,
+  Polyline,
+  Popup,
+  TileLayer,
+  useMap,
+} from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
 
@@ -24,7 +32,23 @@ const midpointIcon = L.divIcon({
   iconAnchor: [10, 10],
 })
 
+const spotIcon = L.divIcon({
+  className: 'custom-marker-spot',
+  html: '<div class="h-3.5 w-3.5 rounded-full border-2 border-white bg-sky-500 shadow"></div>',
+  iconSize: [16, 16],
+  iconAnchor: [8, 8],
+})
+
 const defaultCenter = [20, 0]
+const defaultRadiusKm = 8
+
+const preferenceOptions = [
+  { key: 'restaurants', label: 'Restaurants', tags: ['restaurant', 'fast_food', 'cafe'] },
+  { key: 'libraries', label: 'Libraries', tags: ['library'] },
+  { key: 'parking', label: 'Parking Lots', tags: ['parking'] },
+  { key: 'hospitals', label: 'Hospitals', tags: ['hospital', 'clinic'] },
+  { key: 'parks', label: 'Parks', tags: ['park'] },
+]
 
 const toRadians = (deg) => (deg * Math.PI) / 180
 const toDegrees = (rad) => (rad * 180) / Math.PI
@@ -82,6 +106,82 @@ async function geocodeAddress(query) {
   }
 }
 
+function buildOverpassQuery(latitude, longitude, radiusMeters, amenityTags) {
+  const amenitiesRegex = amenityTags.join('|')
+
+  return `
+[out:json][timeout:30];
+(
+  node["amenity"~"^(${amenitiesRegex})$"](around:${radiusMeters},${latitude},${longitude});
+  way["amenity"~"^(${amenitiesRegex})$"](around:${radiusMeters},${latitude},${longitude});
+  relation["amenity"~"^(${amenitiesRegex})$"](around:${radiusMeters},${latitude},${longitude});
+);
+out center;
+`
+}
+
+function parseOverpassElements(elements) {
+  return elements
+    .map((element) => {
+      const latitude = element.lat ?? element.center?.lat
+      const longitude = element.lon ?? element.center?.lon
+
+      if (typeof latitude !== 'number' || typeof longitude !== 'number') {
+        return null
+      }
+
+      const tags = element.tags ?? {}
+      const name = tags.name || tags.brand || 'Unnamed spot'
+      const amenity = tags.amenity || 'place'
+      const address = [
+        tags['addr:housenumber'],
+        tags['addr:street'],
+        tags['addr:city'],
+        tags['addr:state'],
+        tags['addr:postcode'],
+      ]
+        .filter(Boolean)
+        .join(', ')
+
+      return {
+        id: `${element.type}-${element.id}`,
+        lat: latitude,
+        lon: longitude,
+        name,
+        amenity,
+        address: address || 'Address unavailable',
+        googleMapsUrl: `https://www.google.com/maps?q=${latitude},${longitude}`,
+      }
+    })
+    .filter(Boolean)
+}
+
+async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
+  const activePreferences =
+    selectedKeys.length > 0
+      ? preferenceOptions.filter((option) => selectedKeys.includes(option.key))
+      : preferenceOptions
+
+  const amenityTags = [...new Set(activePreferences.flatMap((option) => option.tags))]
+  const query = buildOverpassQuery(midpoint.lat, midpoint.lon, Math.round(radiusKm * 1000), amenityTags)
+
+  const response = await fetch('https://overpass-api.de/api/interpreter', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'text/plain',
+      Accept: 'application/json',
+    },
+    body: query,
+  })
+
+  if (!response.ok) {
+    throw new Error('Area search failed. Please try again.')
+  }
+
+  const data = await response.json()
+  return parseOverpassElements(data.elements ?? []).slice(0, 50)
+}
+
 function FitMapToPoints({ points }) {
   const map = useMap()
 
@@ -103,6 +203,10 @@ export default function App() {
   const [pointA, setPointA] = useState(null)
   const [pointB, setPointB] = useState(null)
   const [bias, setBias] = useState(0.5)
+  const [enableAreaSearch, setEnableAreaSearch] = useState(false)
+  const [radiusKm, setRadiusKm] = useState(defaultRadiusKm)
+  const [selectedPreferences, setSelectedPreferences] = useState([])
+  const [searchResults, setSearchResults] = useState([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
@@ -119,12 +223,22 @@ export default function App() {
     }
   }, [bias, pointA, pointB])
 
-  const mapPoints = useMemo(() => [pointA, pointB, midpoint].filter(Boolean), [pointA, pointB, midpoint])
+  const mapPoints = useMemo(
+    () => [pointA, pointB, midpoint, ...searchResults].filter(Boolean),
+    [pointA, pointB, midpoint, searchResults],
+  )
+
+  const handlePreferenceToggle = (key) => {
+    setSelectedPreferences((current) =>
+      current.includes(key) ? current.filter((value) => value !== key) : [...current, key],
+    )
+  }
 
   const handleFindMidpoint = async (event) => {
     event.preventDefault()
     setLoading(true)
     setError('')
+    setSearchResults([])
 
     try {
       const [resultA, resultB] = await Promise.all([
@@ -134,10 +248,27 @@ export default function App() {
 
       setPointA(resultA)
       setPointB(resultB)
+
+      if (enableAreaSearch) {
+        const [midLat, midLon] = biasedGreatCirclePoint(
+          [resultA.lat, resultA.lon],
+          [resultB.lat, resultB.lon],
+          bias,
+        )
+
+        const results = await searchPlacesInArea(
+          { lat: midLat, lon: midLon },
+          radiusKm,
+          selectedPreferences,
+        )
+
+        setSearchResults(results)
+      }
     } catch (err) {
       setError(err.message || 'Unable to calculate midpoint.')
       setPointA(null)
       setPointB(null)
+      setSearchResults([])
     } finally {
       setLoading(false)
     }
@@ -202,12 +333,67 @@ export default function App() {
                 </div>
               </label>
 
+              <label className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-950/60 px-4 py-3">
+                <span className="text-sm font-semibold text-emerald-100">Search the area for a specific spot?</span>
+                <input
+                  type="checkbox"
+                  checked={enableAreaSearch}
+                  onChange={(event) => setEnableAreaSearch(event.target.checked)}
+                  className="h-5 w-5 accent-lime-400"
+                />
+              </label>
+
+              {enableAreaSearch && (
+                <div className="space-y-4 rounded-lg border border-emerald-700/80 bg-emerald-950/50 p-4">
+                  <label className="block">
+                    <div className="mb-2 flex items-center justify-between">
+                      <span className="text-sm font-semibold text-emerald-100">Circle radius</span>
+                      <span className="rounded bg-emerald-800/80 px-2 py-1 text-xs font-semibold text-sky-200">
+                        {radiusKm.toFixed(0)} km
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="1"
+                      max="50"
+                      step="1"
+                      value={radiusKm}
+                      onChange={(event) => setRadiusKm(Number(event.target.value))}
+                      className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-sky-400"
+                    />
+                  </label>
+
+                  <div>
+                    <p className="mb-2 text-sm font-semibold text-emerald-100">Preferences</p>
+                    <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      {preferenceOptions.map((option) => (
+                        <label
+                          key={option.key}
+                          className="flex items-center gap-2 rounded border border-emerald-700/70 px-3 py-2 text-sm"
+                        >
+                          <input
+                            type="checkbox"
+                            checked={selectedPreferences.includes(option.key)}
+                            onChange={() => handlePreferenceToggle(option.key)}
+                            className="h-4 w-4 accent-lime-400"
+                          />
+                          {option.label}
+                        </label>
+                      ))}
+                    </div>
+                    <p className="mt-2 text-xs text-emerald-300/90">
+                      If no preferences are selected, all options are searched automatically.
+                    </p>
+                  </div>
+                </div>
+              )}
+
               <button
                 type="submit"
                 disabled={loading}
                 className="w-full rounded-lg bg-lime-500 px-4 py-3 font-semibold text-emerald-950 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:bg-lime-700"
               >
-                {loading ? 'Calculating…' : 'Find Midpoint'}
+                {loading ? 'Searching…' : 'Find Midpoint'}
               </button>
             </form>
 
@@ -228,6 +414,11 @@ export default function App() {
                   <li>
                     <strong>Adjusted midpoint:</strong> {midpoint.lat.toFixed(6)}, {midpoint.lon.toFixed(6)}
                   </li>
+                  {enableAreaSearch && (
+                    <li>
+                      <strong>Found spots:</strong> {searchResults.length}
+                    </li>
+                  )}
                 </ul>
               ) : (
                 <p className="text-emerald-200/90">Results will appear here after calculation.</p>
@@ -255,6 +446,14 @@ export default function App() {
               />
             )}
 
+            {enableAreaSearch && midpoint && (
+              <Circle
+                center={[midpoint.lat, midpoint.lon]}
+                radius={radiusKm * 1000}
+                pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#93c5fd', fillOpacity: 0.28 }}
+              />
+            )}
+
             {pointA && (
               <Marker position={[pointA.lat, pointA.lon]} icon={markerAIcon}>
                 <Popup>Address A: {pointA.displayName}</Popup>
@@ -274,6 +473,26 @@ export default function App() {
                 </Popup>
               </Marker>
             )}
+
+            {searchResults.map((spot) => (
+              <Marker key={spot.id} position={[spot.lat, spot.lon]} icon={spotIcon}>
+                <Popup>
+                  <div className="space-y-1">
+                    <p className="font-semibold">{spot.name}</p>
+                    <p className="text-xs capitalize text-slate-700">{spot.amenity.replace('_', ' ')}</p>
+                    <p className="text-xs">{spot.address}</p>
+                    <a
+                      href={spot.googleMapsUrl}
+                      target="_blank"
+                      rel="noreferrer"
+                      className="text-xs font-semibold text-blue-700 underline"
+                    >
+                      Open in Google Maps
+                    </a>
+                  </div>
+                </Popup>
+              </Marker>
+            ))}
           </MapContainer>
         </section>
       </div>
