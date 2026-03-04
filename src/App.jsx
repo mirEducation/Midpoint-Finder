@@ -13,28 +13,28 @@ import 'leaflet/dist/leaflet.css'
 
 const markerAIcon = L.divIcon({
   className: 'custom-marker-a',
-  html: '<div class="h-4 w-4 rounded-full border-2 border-white bg-emerald-500 shadow-md"></div>',
+  html: '<div style="height:16px;width:16px;border-radius:9999px;border:2px solid white;background:#1B3A2A;box-shadow:0 2px 6px rgba(0,0,0,0.35)"></div>',
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 })
 
 const markerBIcon = L.divIcon({
   className: 'custom-marker-b',
-  html: '<div class="h-4 w-4 rounded-full border-2 border-white bg-green-700 shadow-md"></div>',
+  html: '<div style="height:16px;width:16px;border-radius:9999px;border:2px solid white;background:#D4860A;box-shadow:0 2px 6px rgba(0,0,0,0.35)"></div>',
   iconSize: [18, 18],
   iconAnchor: [9, 9],
 })
 
 const midpointIcon = L.divIcon({
   className: 'custom-marker-midpoint',
-  html: '<div class="h-5 w-5 rounded-full border-2 border-white bg-lime-500 shadow-lg ring-2 ring-lime-200"></div>',
+  html: '<div style="height:20px;width:20px;border-radius:9999px;border:2px solid white;background:#D4860A;box-shadow:0 0 0 3px #F5EFE0,0 3px 8px rgba(0,0,0,0.35)"></div>',
   iconSize: [20, 20],
   iconAnchor: [10, 10],
 })
 
 const spotIcon = L.divIcon({
   className: 'custom-marker-spot',
-  html: '<div class="h-3.5 w-3.5 rounded-full border-2 border-white bg-sky-500 shadow"></div>',
+  html: '<div style="height:14px;width:14px;border-radius:9999px;border:2px solid white;background:#4A6B4A;box-shadow:0 1px 4px rgba(0,0,0,0.3)"></div>',
   iconSize: [16, 16],
   iconAnchor: [8, 8],
 })
@@ -271,6 +271,9 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
   ]
 
   for (const endpoint of endpoints) {
+    const controller = new AbortController()
+    const timeoutId = setTimeout(() => controller.abort(), 20000)
+
     try {
       const response = await fetch(endpoint, {
         method: 'POST',
@@ -279,7 +282,10 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
           Accept: 'application/json',
         },
         body,
+        signal: controller.signal,
       })
+
+      clearTimeout(timeoutId)
 
       if (!response.ok) {
         continue
@@ -288,6 +294,7 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
       const data = await response.json()
       return parseOverpassElements(data.elements ?? []).slice(0, 120)
     } catch {
+      clearTimeout(timeoutId)
       // try next endpoint
     }
   }
@@ -391,42 +398,44 @@ export default function App() {
   }
 
   return (
-    <main className="h-screen overflow-hidden bg-emerald-950 text-emerald-50">
+    <main className="h-screen overflow-hidden bg-[#7B9E82]">
       <div className="flex h-full flex-col md:flex-row">
-        <section className="w-full bg-emerald-900/95 p-4 shadow-2xl md:w-1/2 md:p-5">
-          <div className="mx-auto flex h-full w-full max-w-xl flex-col">
-            <h1 className="text-2xl font-bold tracking-tight text-emerald-100">Geographical Midpoint Finder</h1>
-            <p className="mt-1 text-xs text-emerald-200/90">
-              Enter two addresses to geocode with Nominatim and place an adjustable midpoint along the route.
-            </p>
+        <section className="w-full border-r border-[#C8D5C0] bg-[#F5EFE0] p-4 shadow-2xl md:w-1/2 md:p-6">
+          <div className="panel-scroll mx-auto flex h-full w-full max-w-xl flex-col overflow-y-auto">
+            <div className="border-b border-[#C8D5C0] pb-4 mb-4">
+              <h1 className="font-display text-3xl font-bold tracking-tight text-[#1B3A2A]">Geographical Midpoint Finder</h1>
+              <p className="mt-1.5 text-xs text-[#4A6B4A]">
+                Enter two addresses and find what's in between!
+              </p>
+            </div>
 
-            <form onSubmit={handleFindMidpoint} className="mt-4 grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-2">
+            <form onSubmit={handleFindMidpoint} className="grid grid-cols-1 gap-3 md:grid-cols-2 md:gap-3">
               <label className="block md:col-span-2">
-                <span className="mb-1 block text-xs font-semibold text-emerald-100">Address A</span>
+                <span className="mb-1.5 block text-xs font-semibold text-[#1B3A2A]">Address A</span>
                 <input
                   value={addressA}
                   onChange={(event) => setAddressA(event.target.value)}
-                  className="w-full rounded-lg border border-emerald-700 bg-emerald-950/80 px-3 py-2 text-sm text-emerald-50 placeholder:text-emerald-300/60 focus:border-lime-400 focus:outline-none focus:ring-2 focus:ring-lime-500/40"
+                  className="w-full rounded-lg border border-[#A8C4A0] bg-white px-3 py-2.5 text-sm text-[#1B3A2A] shadow-sm placeholder:text-[#A8C4A0] focus:border-[#D4860A] focus:outline-none focus:ring-2 focus:ring-[#D4860A]/30"
                   placeholder="e.g., New York, NY"
                   required
                 />
               </label>
 
               <label className="block md:col-span-2">
-                <span className="mb-1 block text-xs font-semibold text-emerald-100">Address B</span>
+                <span className="mb-1.5 block text-xs font-semibold text-[#1B3A2A]">Address B</span>
                 <input
                   value={addressB}
                   onChange={(event) => setAddressB(event.target.value)}
-                  className="w-full rounded-lg border border-emerald-700 bg-emerald-950/80 px-3 py-2 text-sm text-emerald-50 placeholder:text-emerald-300/60 focus:border-lime-400 focus:outline-none focus:ring-2 focus:ring-lime-500/40"
+                  className="w-full rounded-lg border border-[#A8C4A0] bg-white px-3 py-2.5 text-sm text-[#1B3A2A] shadow-sm placeholder:text-[#A8C4A0] focus:border-[#D4860A] focus:outline-none focus:ring-2 focus:ring-[#D4860A]/30"
                   placeholder="e.g., Los Angeles, CA"
                   required
                 />
               </label>
 
               <label className="block md:col-span-2">
-                <div className="mb-1 flex items-center justify-between">
-                  <span className="text-xs font-semibold text-emerald-100">Bias slider</span>
-                  <span className="rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-lime-200">
+                <div className="mb-1.5 flex items-center justify-between">
+                  <span className="text-xs font-semibold text-[#1B3A2A]">Bias slider</span>
+                  <span className="rounded-full bg-[#1B3A2A] px-2.5 py-0.5 text-[11px] font-semibold text-[#F5EFE0]">
                     {bias.toFixed(2)}
                   </span>
                 </div>
@@ -437,32 +446,32 @@ export default function App() {
                   step="0.01"
                   value={bias}
                   onChange={(event) => setBias(Number(event.target.value))}
-                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-lime-400"
+                  className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#C8D5C0] accent-[#D4860A]"
                 />
-                <div className="mt-1 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-emerald-300/80">
+                <div className="mt-1.5 flex justify-between text-[10px] font-semibold uppercase tracking-wide text-[#4A6B4A]">
                   <span>Closer to A</span>
                   <span>Even</span>
                   <span>Closer to B</span>
                 </div>
               </label>
 
-              <label className="flex items-center justify-between rounded-lg border border-emerald-700 bg-emerald-950/60 px-3 py-2 md:col-span-2">
-                <span className="text-xs font-semibold text-emerald-100">Search the area for a specific spot?</span>
+              <label className="flex cursor-pointer items-center justify-between rounded-lg border border-[#A8C4A0] bg-white px-3 py-2.5 shadow-sm md:col-span-2">
+                <span className="text-xs font-semibold text-[#1B3A2A]">Search the area for a specific spot?</span>
                 <input
                   type="checkbox"
                   checked={enableAreaSearch}
                   onChange={(event) => setEnableAreaSearch(event.target.checked)}
-                  className="h-4 w-4 accent-lime-400"
+                  className="h-4 w-4 accent-[#D4860A]"
                 />
               </label>
 
               {enableAreaSearch && (
-                <div className="space-y-2 rounded-lg border border-emerald-700/80 bg-emerald-950/50 p-3 md:col-span-2">
+                <div className="space-y-3 rounded-lg border border-[#A8C4A0] bg-[#E8EDDF] p-3 md:col-span-2">
                   <div className="grid grid-cols-2 items-end gap-2">
                     <label className="block col-span-2">
-                      <div className="mb-1 flex items-center justify-between">
-                        <span className="text-xs font-semibold text-emerald-100">Circle radius</span>
-                        <div className="flex items-center gap-1 rounded bg-emerald-800/80 px-2 py-0.5 text-[11px] font-semibold text-sky-100">
+                      <div className="mb-1.5 flex items-center justify-between">
+                        <span className="text-xs font-semibold text-[#1B3A2A]">Circle radius</span>
+                        <div className="flex items-center gap-1 rounded-full bg-[#FDF0D5] px-2.5 py-0.5 text-[11px] font-semibold text-[#7A4F00]">
                           <input
                             type="number"
                             min="0"
@@ -482,24 +491,24 @@ export default function App() {
                         step="0.1"
                         value={Math.min(10, Math.max(0.3, radiusKm))}
                         onChange={(event) => setRadiusKm(Number(event.target.value))}
-                        className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-emerald-700 accent-sky-400"
+                        className="h-2 w-full cursor-pointer appearance-none rounded-lg bg-[#C8D5C0] accent-[#D4860A]"
                       />
                     </label>
                   </div>
 
                   <div>
-                    <p className="mb-1 text-xs font-semibold text-emerald-100">Preferences</p>
+                    <p className="mb-1.5 text-xs font-semibold text-[#1B3A2A]">Filters</p>
                     <div className="grid grid-cols-2 gap-1.5 md:grid-cols-3">
                       {preferenceOptions.map((option) => (
                         <label
                           key={option.key}
-                          className="flex items-center gap-2 rounded border border-emerald-700/70 px-2 py-1 text-xs"
+                          className="flex cursor-pointer items-center gap-2 rounded-md border border-[#A8C4A0] bg-white/60 px-2 py-1.5 text-xs text-[#1B3A2A] transition hover:bg-white/90"
                         >
                           <input
                             type="checkbox"
                             checked={selectedPreferences.includes(option.key)}
                             onChange={() => handlePreferenceToggle(option.key)}
-                            className="h-3.5 w-3.5 accent-lime-400"
+                            className="h-3.5 w-3.5 accent-[#D4860A]"
                           />
                           {option.label}
                         </label>
@@ -512,17 +521,17 @@ export default function App() {
               <button
                 type="submit"
                 disabled={loading}
-                className="rounded-lg bg-lime-500 px-4 py-2.5 text-sm font-semibold text-emerald-950 transition hover:bg-lime-400 disabled:cursor-not-allowed disabled:bg-lime-700 md:col-span-2"
+                className="rounded-lg bg-[#D4860A] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:bg-[#E8960A] hover:shadow-lg disabled:cursor-not-allowed disabled:bg-[#B8A08A] md:col-span-2"
               >
                 {loading ? 'Searching…' : 'Find Midpoint'}
               </button>
             </form>
 
-            <div className="mt-3 rounded-xl border border-emerald-700/80 bg-emerald-950/50 p-3 text-xs">
+            <div className="mt-4 rounded-xl border border-[#A8C4A0] bg-white/70 p-3 text-xs shadow-sm">
               {error ? (
-                <p className="font-medium text-rose-300">{error}</p>
+                <p className="font-medium text-[#C0392B]">{error}</p>
               ) : pointA && pointB ? (
-                <ul className="space-y-1 text-emerald-100">
+                <ul className="space-y-1 text-[#1B3A2A]">
                   <li>
                     <strong>Address 1:</strong> {pointA.shortName}
                   </li>
@@ -536,7 +545,7 @@ export default function App() {
                   )}
                 </ul>
               ) : (
-                <p className="text-emerald-200/90">Results will appear here after calculation.</p>
+                <p className="text-[#4A6B4A]">Results will appear here after calculation.</p>
               )}
             </div>
           </div>
@@ -546,7 +555,7 @@ export default function App() {
           <MapContainer center={defaultCenter} zoom={2} scrollWheelZoom className="h-full w-full">
             <TileLayer
               attribution='&copy; OpenStreetMap contributors &copy; CARTO'
-              url="https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+              url="https://{s}.basemaps.cartocdn.com/rastertiles/light_all/{z}/{x}/{y}{r}.png"
             />
 
             {mapPoints.length > 0 && <FitMapToPoints points={mapPoints} />}
@@ -554,7 +563,7 @@ export default function App() {
             {routePath.length > 1 && (
               <Polyline
                 positions={routePath}
-                pathOptions={{ color: '#1f2937', weight: 8, dashArray: '16 12', lineCap: 'butt' }}
+                pathOptions={{ color: '#1B3A2A', weight: 5, dashArray: '14 10', lineCap: 'round', opacity: 0.85 }}
               />
             )}
 
@@ -562,7 +571,7 @@ export default function App() {
               <Circle
                 center={[midpoint.lat, midpoint.lon]}
                 radius={Math.max(0, radiusKm) * 1000}
-                pathOptions={{ color: '#ffffff', weight: 2, fillColor: '#93c5fd', fillOpacity: 0.28 }}
+                pathOptions={{ color: '#1B3A2A', weight: 1.5, fillColor: '#D4860A', fillOpacity: 0.13 }}
               />
             )}
 
@@ -590,7 +599,7 @@ export default function App() {
                       href={midpoint.googleMapsUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-xs font-semibold text-blue-700 underline"
+                      className="text-xs font-semibold text-[#D4860A] underline"
                     >
                       Open midpoint in Google Maps
                     </a>
@@ -610,7 +619,7 @@ export default function App() {
                       href={spot.googleMapsUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="text-xs font-semibold text-blue-700 underline"
+                      className="text-xs font-semibold text-[#D4860A] underline"
                     >
                       Open in Google Maps
                     </a>
