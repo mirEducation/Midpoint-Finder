@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
+import { ShimmerButton } from '@/components/ui/shimmer-button'
 import {
   Circle,
   MapContainer,
@@ -42,59 +43,68 @@ const spotIcon = L.divIcon({
 const defaultCenter = [20, 0]
 const defaultRadiusKm = 1.5
 
+// Each filter entry has an optional `types` array specifying which OSM element
+// types to query. Defaults to ['node', 'way'] when omitted. Relations are only
+// used where they genuinely represent the feature (e.g. park multipolygons).
 const preferenceOptions = [
   {
     key: 'restaurants',
     label: 'Restaurants',
     filters: [
-      { key: 'amenity', value: 'restaurant' },
-      { key: 'amenity', value: 'fast_food' },
+      { key: 'amenity', value: 'restaurant', types: ['node', 'way'] },
+      { key: 'amenity', value: 'fast_food',  types: ['node', 'way'] },
     ],
   },
   {
     key: 'cafes',
     label: 'Cafes',
-    filters: [{ key: 'amenity', value: 'cafe' }],
+    // Cafes are almost exclusively nodes; including way covers the rare café-in-a-building case.
+    // Relations are never used for cafes.
+    filters: [{ key: 'amenity', value: 'cafe', types: ['node', 'way'] }],
   },
   {
     key: 'libraries',
     label: 'Libraries',
-    filters: [{ key: 'amenity', value: 'library' }],
+    filters: [{ key: 'amenity', value: 'library', types: ['node', 'way'] }],
   },
   {
     key: 'parking',
     label: 'Parking Lots',
-    filters: [{ key: 'amenity', value: 'parking' }],
+    // Parking lots are often mapped as way polygons (areas), sometimes nodes.
+    filters: [{ key: 'amenity', value: 'parking', types: ['node', 'way'] }],
   },
   {
     key: 'hospitals',
     label: 'Hospitals',
+    // Hospitals / clinics are commonly mapped as way polygons (buildings).
     filters: [
-      { key: 'amenity', value: 'hospital' },
-      { key: 'amenity', value: 'clinic' },
+      { key: 'amenity', value: 'hospital', types: ['node', 'way'] },
+      { key: 'amenity', value: 'clinic',   types: ['node', 'way'] },
     ],
   },
   {
     key: 'parks',
     label: 'Parks',
+    // Parks are area features — use way+relation (multipolygon parks).
+    // `boundary=national_park` intentionally removed: those are continent-scale
+    // relation geometries that reliably cause Overpass timeouts.
     filters: [
-      { key: 'leisure', value: 'park' },
-      { key: 'boundary', value: 'national_park' },
-      { key: 'landuse', value: 'recreation_ground' },
+      { key: 'leisure', value: 'park',               types: ['way', 'relation'] },
+      { key: 'landuse', value: 'recreation_ground',  types: ['way'] },
+      { key: 'leisure', value: 'nature_reserve',     types: ['way', 'relation'] },
     ],
   },
   {
     key: 'hotels',
     label: 'Hotels',
-    filters: [{ key: 'tourism', value: 'hotel' }],
+    filters: [{ key: 'tourism', value: 'hotel', types: ['node', 'way'] }],
   },
   {
     key: 'theatres',
     label: 'Theatres',
-    filters: [
-      { key: 'amenity', value: 'theatre' },
-      { key: 'building', value: 'theatre' },
-    ],
+    // `building=theatre` removed: it matches any building shell tagged as a theatre
+    // type and is extremely expensive to query. `amenity=theatre` is the correct POI tag.
+    filters: [{ key: 'amenity', value: 'theatre', types: ['node', 'way'] }],
   },
 ]
 
@@ -199,15 +209,17 @@ async function geocodeAddress(query) {
 
 function buildOverpassQuery(latitude, longitude, radiusMeters, filters) {
   const lines = filters
-    .map(
-      ({ key, value }) => `
-  node["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});
-  way["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});
-  relation["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});`,
+    .flatMap(({ key, value, types = ['node', 'way'] }) =>
+      types.map(
+        (type) => `\n  ${type}["${key}"="${value}"](around:${radiusMeters},${latitude},${longitude});`,
+      ),
     )
     .join('')
 
-  return `[out:json][timeout:30];(${lines});out center;`
+  // timeout:14 lets the server self-cancel before the 20s client abort fires.
+  // maxsize:16777216 (16 MB) caps runaway response payloads.
+  // out center qt uses quadtile ordering which is faster on large result sets.
+  return `[out:json][timeout:14][maxsize:16777216];(${lines}\n);out center qt;`
 }
 
 function parseOverpassElements(elements) {
@@ -222,7 +234,7 @@ function parseOverpassElements(elements) {
 
       const tags = element.tags ?? {}
       const name = tags.name || tags.brand || 'Unnamed spot'
-      const typeTag = tags.amenity || tags.leisure || tags.boundary || 'place'
+      const typeTag = tags.amenity || tags.leisure || tags.tourism || tags.landuse || 'place'
       const address = [
         tags['addr:housenumber'],
         tags['addr:street'],
@@ -255,7 +267,13 @@ async function searchPlacesInArea(midpoint, radiusKm, selectedKeys) {
   const filters = []
   activePreferences.forEach((option) => {
     option.filters.forEach((filter) => {
-      const exists = filters.some((item) => item.key === filter.key && item.value === filter.value)
+      const filterTypes = filter.types ?? ['node', 'way']
+      const exists = filters.some(
+        (item) =>
+          item.key === filter.key &&
+          item.value === filter.value &&
+          JSON.stringify(item.types ?? ['node', 'way']) === JSON.stringify(filterTypes),
+      )
       if (!exists) {
         filters.push(filter)
       }
@@ -518,13 +536,17 @@ export default function App() {
                 </div>
               )}
 
-              <button
+              <ShimmerButton
                 type="submit"
                 disabled={loading}
-                className="rounded-lg bg-[#D4860A] px-4 py-2.5 text-sm font-semibold text-white shadow-md transition-all duration-200 hover:bg-[#E8960A] hover:shadow-lg disabled:cursor-not-allowed disabled:bg-[#B8A08A] md:col-span-2"
+                shimmerColor="#ffffff"
+                shimmerDuration="2.5s"
+                borderRadius="8px"
+                background={loading ? 'rgba(184, 160, 138, 1)' : 'rgba(212, 134, 10, 1)'}
+                className="w-full py-2.5 text-sm font-semibold shadow-md disabled:cursor-not-allowed md:col-span-2"
               >
                 {loading ? 'Searching…' : 'Find Midpoint'}
-              </button>
+              </ShimmerButton>
             </form>
 
             <div className="mt-4 rounded-xl border border-[#A8C4A0] bg-white/70 p-3 text-xs shadow-sm">
