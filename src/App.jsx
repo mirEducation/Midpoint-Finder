@@ -11,6 +11,7 @@ import {
 } from 'react-leaflet'
 import L from 'leaflet'
 import 'leaflet/dist/leaflet.css'
+import { Analytics } from '@vercel/analytics/react'
 
 const markerAIcon = L.divIcon({
   className: 'custom-marker-a',
@@ -652,6 +653,7 @@ export default function App() {
           </MapContainer>
         </section>
       </div>
+      <Analytics />
     </main>
   )
 }
